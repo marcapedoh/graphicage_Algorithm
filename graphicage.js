@@ -1,5 +1,6 @@
 const _= require('lodash');
-const fs= require('fs')
+const fs= require('fs');
+const XLSX = require('xlsx'); // Pour la création de feuilles
 const cityNames = [
     "Paris", "London", "New York", "Tokyo", "Berlin", "Sydney", "Rome", "Moscow", "Madrid", "Beijing"
 ];
@@ -24,30 +25,60 @@ function getRandomCityName() {
 
 console.log(getRandomCityName());
 
-function getWeekdays(startDate,numberOfDays){
-    const weekdays=[];
-    let currentDate= new Date(startDate);
+function getStartOfWeek(currentDate) {
+    const date = new Date(currentDate);
+    // Déterminer combien de jours sont passés depuis le lundi
+    const day = date.getDay();
+    const diff = (day >= 1 ? day - 1 : 6) * -1;
+    // Calculer la date du lundi
+    date.setDate(date.getDate() + diff);
+    // Réinitialiser les heures à 00:00:00
+    date.setHours(0, 0, 0, 0);
+    return date;
+}
 
-    while(weekdays.length< numberOfDays){
-        if(currentDate.getDay()!==0 && currentDate.getDay()!==6){
+// Exemple d'utilisation
+const today = new Date();
+const startOfWeek = getStartOfWeek(today);
+
+function getWeekdays(startDate, numberOfDays) {
+    const weekdays = [];
+    let currentDate = new Date(startDate);
+
+    while (weekdays.length < numberOfDays) {
+        if (currentDate.getDay() !== 0 && currentDate.getDay() !== 6) {
             weekdays.push(new Date(currentDate));
         }
-        currentDate.setDate(currentDate.getDate()+1);
+        currentDate.setDate(currentDate.getDate() + 1);
     }
     return weekdays;
 }
-function getSaturday(startDate) {
+
+function getSaturdays(startDate) {
+    const saturdays = [];
     let currentDate = new Date(startDate);
 
     // Trouver le premier samedi après la date de début
     while (currentDate.getDay() !== 6) {
         currentDate.setDate(currentDate.getDate() + 1);
     }
-    return currentDate;
+
+    // Ajouter tous les samedis jusqu'à la fin de l'année
+    const endDate = new Date(startDate);
+    endDate.setFullYear(endDate.getFullYear() + 1); // Vous pouvez ajuster cette date de fin si nécessaire
+
+    while (currentDate <= endDate) {
+        saturdays.push(new Date(currentDate));
+        currentDate.setDate(currentDate.getDate() + 7); // Passer au samedi suivant
+    }
+
+    return saturdays;
 }
-const startDate= new Date("2024-07-01");
-const numberOfWeekdays=5;
-const weekdays=getWeekdays(startDate,numberOfWeekdays)
+
+// Utilisation des fonctions
+const numberOfWeekdays = 5;
+const weekdays = getWeekdays(startOfWeek, numberOfWeekdays);
+const saturdays = getSaturdays(startOfWeek);
 
 const generateLines=(numberOfLines)=>{
     return _.times(numberOfLines, (i)=>({
@@ -144,15 +175,6 @@ const optimalBusCount = () => {
 assignTerminusAndGareToLine();
 const optimalBusResult=optimalBusCount();
 
-/*const assignOptimizedBusOnLine=()=>{
-    _.times(lines.length, (i)=>{
-        const optimalBusCountForLine=optimalBusResult[i];
-        const assignedBuses=_.times(optimalBusCountForLine,()=>({
-            bus:buses[Math.floor(Math.random()*buses.length)]
-        }));
-        lines[i].assignedBuses=assignedBuses;
-    })
-}*/
 
 
 const assignOptimizedBusOnLine=()=>{
@@ -258,6 +280,48 @@ const adjustDepartureTimes=()=>{
             // Ajouter les horaires du soir à la ligne
             line.schedule = line.schedule.concat(_.flatten(eveningSchedules));
         });
+        // Ajouter les horaires spécifiques pour le samedi
+        _.each(line.assignedBuses, (assignedBus) => {
+            const saturdaySchedules = _.map(saturdays, (day) => {
+                const saturdayTimes = [];
+                const morningStartHour = 5.5;
+                const morningEndHour = 12;
+                const totalMorningMinutes = (morningEndHour - morningStartHour) * 60;
+                const totalTimePerTrip = 2 * travelTimeMinutes + 20;
+                const morningTrips = 2; // 2 courses le matin
+
+                // Horaires du matin pour le samedi
+                for (let i = 0; i < morningTrips; i++) {
+                    const terminusDepartureMorning = new Date(day);
+                    terminusDepartureMorning.setHours(5, 30, 0, 0);
+                    terminusDepartureMorning.setMinutes(terminusDepartureMorning.getMinutes() + i * totalTimePerTrip);
+                    const gareDepartureMorning = new Date(terminusDepartureMorning);
+                    gareDepartureMorning.setMinutes(gareDepartureMorning.getMinutes() + travelTimeMinutes + 10);
+
+                    saturdayTimes.push({
+                        terminusDeparture: terminusDepartureMorning,
+                        gareDeparture: gareDepartureMorning
+                    });
+                }
+
+                // Horaire du soir pour le samedi
+                const terminusDepartureEvening = new Date(day);
+                terminusDepartureEvening.setHours(16, 0, 0, 0);
+                const gareDepartureEvening = new Date(terminusDepartureEvening);
+                gareDepartureEvening.setMinutes(gareDepartureEvening.getMinutes() + travelTimeMinutes + 10);
+
+                saturdayTimes.push({
+                    terminusDeparture: terminusDepartureEvening,
+                    gareDeparture: gareDepartureEvening
+                });
+                
+                return saturdayTimes;
+            });
+
+            // Ajouter les horaires du samedi à la ligne
+            line.schedule = line.schedule.concat(_.flatten(saturdaySchedules));
+        });
+    
     });
     
 }
@@ -303,6 +367,9 @@ const assignBusesToSchedules = () => {
 // Appel de la fonction pour assigner les bus aux horaires
 assignBusesToSchedules();
 
+function calculateTravelTimeDif(startTime,endTime){
+    return endTime-startTime;
+}
 const assignPersonnelToBuses = () => {
     const personnelByType = {
         conducteur: personnel.filter(p => p.type === 'conducteur'),
@@ -392,6 +459,77 @@ const assignPersonnelToBuses = () => {
             });
         });
     });
+
+    const outputData = [];
+
+    lines.forEach(line => {
+        line.schedule.forEach(schedule => {
+            schedule.assignedBusesSchedule.forEach(bus => {
+                const duration = calculateTravelTime(line.terminus, line.gare);
+                outputData.push({
+                    Ligne: line.nom,
+                    Bus: bus.nom,
+                    Conducteur: bus.conductor ? bus.conductor.nom : 'N/A',
+                    Billetiste: bus.billetiste ? bus.billetiste.nom : 'N/A',
+                    'DépartTerminus': schedule.terminusDeparture.toISOString(),
+                    'ArrivéeGare': schedule.gareDeparture.toISOString(),
+                    'Terminus': line.terminus.nom,
+                    'Gare': line.gare.nom,
+                    'TempsDeParcours(min)': duration
+                });
+            });
+        });
+    });
+
+  // Créer une nouvelle feuille de calcul avec xlsx
+  const worksheet = XLSX.utils.json_to_sheet(outputData);
+
+  // Définir les couleurs à utiliser pour les lignes
+  const colors = ['E0F2F1', 'C8E6C9', 'A5D6A7', '81C784']; // Liste de couleurs
+  const lineColorMap = {}; // Carte pour stocker les couleurs par ligne
+  
+  // Remplir la carte des couleurs en fonction des lignes uniques
+  const range = XLSX.utils.decode_range(worksheet['!ref']);
+  let colorIndex = 0;
+  
+  for (let R = range.s.r; R <= range.e.r; R++) {
+      const cellAddress = {c: 0, r: R}; // Colonne 0 correspond à "Ligne"
+      const cellRef = XLSX.utils.encode_cell(cellAddress);
+      const cell = worksheet[cellRef];
+  
+      if (cell && cell.v) {
+          const lineValue = cell.v.toString();
+  
+          if (!lineColorMap[lineValue]) {
+              lineColorMap[lineValue] = colors[colorIndex % colors.length];
+              colorIndex++;
+          }
+      }
+  }
+  
+  // Appliquer les couleurs aux cellules de la colonne "Ligne"
+  for (let R = range.s.r; R <= range.e.r; R++) {
+      for (let C = range.s.c; C <= range.e.c; C++) {
+          const cellAddress = {c: C, r: R};
+          const cellRef = XLSX.utils.encode_cell(cellAddress);
+          if (!worksheet[cellRef]) continue;
+  
+          if (C === 0) { // Appliquer la couleur seulement à la colonne "Ligne"
+              const lineValue = worksheet[cellRef].v.toString();
+              worksheet[cellRef].s = {
+                  fill: {
+                      fgColor: { rgb: lineColorMap[lineValue] || 'FFFFFF' } // Couleur de fond par défaut (blanc)
+                  }
+              };
+          }
+      }
+  }
+  
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Assignments');
+  
+  // Écrire le fichier Excel
+  XLSX.writeFile(workbook, 'output.xlsx');
 };
 
 assignPersonnelToBuses();
